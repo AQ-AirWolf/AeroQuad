@@ -30,7 +30,7 @@
 #if defined (AltitudeHoldBaro) || defined (AltitudeHoldRangeFinder)
   boolean isPositionHoldEnabledByUser() {
     #if defined (UseGPSNavigator)
-      if ((receiverCommand[receiverChannelMap[AUX1] < 1750) || (receiverCommand[receiverChannelMap[AUX2] < 1750)) {
+      if ((receiverCommand[receiverChannelMap[AUX1]] < 1750) || (receiverCommand[receiverChannelMap[AUX2]] < 1750)) {
         return true;
       }
       return false;
@@ -99,7 +99,7 @@
       autoLandingThrottleCorrection = 0;
       isAutoLandingInitialized = false;
       #if defined (UseGPSNavigator)
-        if ((receiverCommand[receiverChannelMap[AUX1] > 1750) && (receiverCommand[receiverChannelMap[AUX2] > 1750)) {
+        if ((receiverCommand[receiverChannelMap[AUX1]] > 1750) && (receiverCommand[receiverChannelMap[AUX2]] > 1750)) {
           altitudeHoldState = OFF;
           isAltitudeHoldInitialized = false;
         }
@@ -118,8 +118,8 @@
   void processGpsNavigationStateFromReceiverCommand() {
     // Init home command
     if (motorArmed == OFF && 
-        receiverCommand[receiverChannelMap[THROTTLE] < MINCHECK && receiverCommand[receiverChannelMap[ZAXIS] < MINCHECK &&
-        receiverCommand[receiverChannelMap[YAXIS] > MAXCHECK && receiverCommand[receiverChannelMap[XAXIS] > MAXCHECK &&
+        receiverCommand[receiverChannelMap[THROTTLE]] < MINCHECK && receiverCommand[receiverChannelMap[ZAXIS]] < MINCHECK &&
+        receiverCommand[receiverChannelMap[YAXIS]] > MAXCHECK && receiverCommand[receiverChannelMap[XAXIS]] > MAXCHECK &&
         haveAGpsLock()) {
   
       homePosition.latitude = currentPosition.latitude;
@@ -128,7 +128,7 @@
     }
 
 
-    if (receiverCommand[receiverChannelMap[AUX2] < 1750) {  // Enter in execute mission state, if none, go back home, override the position hold
+    if (receiverCommand[receiverChannelMap[AUX2]] < 1750) {  // Enter in execute mission state, if none, go back home, override the position hold
       if (!isGpsNavigationInitialized) {
         gpsRollAxisCorrection = 0;
         gpsPitchAxisCorrection = 0;
@@ -141,7 +141,7 @@
   
       navigationState = ON;
     }
-    else if (receiverCommand[receiverChannelMap[AUX1] < 1250) {  // Enter in position hold state
+    else if (receiverCommand[receiverChannelMap[AUX1]] < 1250) {  // Enter in position hold state
       if (!isPositionHoldInitialized) {
         gpsRollAxisCorrection = 0;
         gpsPitchAxisCorrection = 0;
