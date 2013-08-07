@@ -32,18 +32,26 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include "AeroQuad.h"
 
+const int autopilotType = MAV_AUTOPILOT_AEROQUAD;
 int systemType = MAV_TYPE_GENERIC;
-int autopilotType = MAV_AUTOPILOT_AEROQUAD;
 int systemMode = MAV_MODE_FLAG_MANUAL_INPUT_ENABLED;
 int systemStatus = MAV_STATE_BOOT;
 uint16_t len;
 
-int waypointCounter = -1;
-int waypointsToRetrieve = -1;
+// Variables for sending and receiving waypoints
+bool waypointSending = false;
+bool waypointReceiving = false; 
+unsigned long waypointTimeLastSent = 0;
+unsigned long waypointTimeLastReceived = 0;
+unsigned long waypointTimeLastRequest = 0;
+unsigned long waypointSendTimeout = 1000; // 1 second
+unsigned long waypointReceiveTimeout = 1000;
+int waypointReceiveIndex = -1;
+int waypointSendIndex = -1;
+int waypointsToReceive = -1;
 const char* waypointLimitReachedWarning = "Only 16 waypoints in one mission allowed to be executed!";
 
 // Variables for writing and sending parameters
-
 enum parameterTypeIndicator
 {
 	P,
@@ -101,19 +109,19 @@ const char* parameterNameCamMode = "Cam_Mode";
 const char* parameterNameCamPitchScale = "Cam_Scale Pitch";
 const char* parameterNameCamRollScale = "Cam_Scale Roll";
 const char* parameterNameCamYawScale = "Cam_Scale Yaw";
-const char* parameterNameCamRollServoMiddle = "Cam_PitchMid";
-const char* parameterNameCamPitchServoMiddle = "Cam_RollMid";
-const char* parameterNameCamYawServoMiddle = "Cam_YawMid";
-const char* parameterNameCamPitchServoMin = "Cam_PitchMim";
-const char* parameterNameCamRollServoMin = "Cam_RollMim";
-const char* parameterNameCamYawServoMin = "Cam_YawMim";
-const char* parameterNameCamPitchServoMax = "Cam_PitchMax";
-const char* parameterNameCamRollServoMax = "Cam_RollMax";
-const char* parameterNameCamYawServoMax = "Cam_YawMax";
+const char* parameterNameCamRollServoMiddle = "Cam_Pitch Mid";
+const char* parameterNameCamPitchServoMiddle = "Cam_Roll Mid";
+const char* parameterNameCamYawServoMiddle = "Cam_Yaw Mid";
+const char* parameterNameCamPitchServoMin = "Cam_Pitch Min";
+const char* parameterNameCamRollServoMin = "Cam_Roll Min";
+const char* parameterNameCamYawServoMin = "Cam_Yaw Min";
+const char* parameterNameCamPitchServoMax = "Cam_Pitch Max";
+const char* parameterNameCamRollServoMax = "Cam_Roll Max";
+const char* parameterNameCamYawServoMax = "Cam_Yaw Max";
 #endif
 #if defined(AltitudeHoldBaro) || defined(AltitudeHoldRangeFinder)
-const char* parameterNameAHminThrottleAdjust = "AltHold_MinAdj";
-const char* parameterNameAHmaxThrottleAdjust = "AltHold_MaxAdj";
+const char* parameterNameAHminThrottleAdjust = "AltHold_Min Adj";
+const char* parameterNameAHmaxThrottleAdjust = "AltHold_Max Adj";
 const char* parameterNameAHBumpValue = "AltHold_BumpVal";
 const char* parameterNameAHPanicValue = "AltHold_PanicVa";
 #endif
@@ -151,7 +159,7 @@ byte *parameterByte;
 int *parameterInt;
 unsigned long *parameterULong;
 
-static uint16_t millisecondsSinceBoot = 0;
+static uint16_t millisecondsSinceBootWhileArmed = 0;
 long system_dropped_packets = 0;
 
 mavlink_message_t msg;
@@ -217,17 +225,16 @@ void initCommunication() {
 uint32_t previousFlightTimeUpdate = 0;
 void updateFlightTime() {
 
-	uint16_t timeDiff = millis() - previousFlightTimeUpdate;
-	previousFlightTimeUpdate += timeDiff;
-
 	if (motorArmed) {
-		millisecondsSinceBoot += timeDiff;
+		uint16_t timeDiff = millis() - previousFlightTimeUpdate;
+
+		previousFlightTimeUpdate += timeDiff;
+		millisecondsSinceBootWhileArmed += timeDiff;
 	}
 }
 
 void sendSerialHeartbeat() {
-
-	systemMode |= MAV_MODE_FLAG_MANUAL_INPUT_ENABLED;
+	systemMode = MAV_MODE_FLAG_MANUAL_INPUT_ENABLED;
 
 	if (flightMode == ATTITUDE_FLIGHT_MODE) {
 		systemMode |= MAV_MODE_FLAG_STABILIZE_ENABLED;
@@ -252,7 +259,6 @@ void sendSerialHeartbeat() {
 	SERIAL_PORT.write(buf, len);
 }
 
-
 void sendSerialRawIMU() {
 #if defined(HeadingMagHold)
 	mavlink_msg_raw_imu_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0, meterPerSecSec[XAXIS], meterPerSecSec[YAXIS], meterPerSecSec[ZAXIS], gyroRate[XAXIS], gyroRate[YAXIS], gyroRate[ZAXIS], getMagnetometerRawData(XAXIS), getMagnetometerRawData(YAXIS), getMagnetometerRawData(ZAXIS));
@@ -263,9 +269,8 @@ void sendSerialRawIMU() {
 	SERIAL_PORT.write(buf, len);
 }
 
-
 void sendSerialAttitude() {
-	mavlink_msg_attitude_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, millisecondsSinceBoot, kinematicsAngle[XAXIS], kinematicsAngle[YAXIS], kinematicsAngle[ZAXIS], 0, 0, 0);
+	mavlink_msg_attitude_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, millisecondsSinceBootWhileArmed, kinematicsAngle[XAXIS], kinematicsAngle[YAXIS], kinematicsAngle[ZAXIS], 0, 0, 0);
 	len = mavlink_msg_to_send_buffer(buf, &msg);
 	SERIAL_PORT.write(buf, len);
 }
@@ -273,15 +278,19 @@ void sendSerialAttitude() {
 void sendSerialHudData() {
 #if defined(HeadingMagHold)
 #if defined(AltitudeHoldBaro)
-	mavlink_msg_vfr_hud_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0.0, 0.0, ((int)(trueNorthHeading / M_PI * 180.0) + 360) % 360, (receiverCommand[THROTTLE]-1000)/10, getBaroAltitude(), 0.0);
+#if defined (UseGPS)
+	mavlink_msg_vfr_hud_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, (float)getGpsSpeed() / 100.0f, (float)getGpsSpeed() / 100.0f, ((int)(trueNorthHeading / M_PI * 180.0) + 360) % 360, (receiverCommand[receiverChannelMap[THROTTLE]]-1000)/10, getBaroAltitude(), 0.0);
 #else
-	mavlink_msg_vfr_hud_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0.0, 0.0, ((int)(trueNorthHeading / M_PI * 180.0) + 360) % 360, (receiverCommand[THROTTLE]-1000)/10, 0, 0.0);
+	mavlink_msg_vfr_hud_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0.0, 0.0, ((int)(trueNorthHeading / M_PI * 180.0) + 360) % 360, (receiverCommand[receiverChannelMap[THROTTLE]]-1000)/10, getBaroAltitude(), 0.0);
+#endif
+#else
+	mavlink_msg_vfr_hud_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0.0, 0.0, ((int)(trueNorthHeading / M_PI * 180.0) + 360) % 360, (receiverCommand[receiverChannelMap[THROTTLE]]-1000)/10, 0, 0.0);
 #endif
 #else
 #if defined(AltitudeHoldBaro)
-	mavlink_msg_vfr_hud_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0.0, 0.0, 0, (receiverCommand[THROTTLE]-1000)/10, getBaroAltitude(), 0.0);
+	mavlink_msg_vfr_hud_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0.0, 0.0, 0, (receiverCommand[receiverChannelMap[THROTTLE]]-1000)/10, getBaroAltitude(), 0.0);
 #else
-	mavlink_msg_vfr_hud_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0.0, 0.0, 0, (receiverCommand[THROTTLE]]-1000)/10, 0, 0.0);
+	mavlink_msg_vfr_hud_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0.0, 0.0, 0, (receiverCommand[receiverChannelMap[THROTTLE]]-1000)/10, 0, 0.0);
 #endif
 #endif
 	len = mavlink_msg_to_send_buffer(buf, &msg);
@@ -289,20 +298,13 @@ void sendSerialHudData() {
 }
 
 void sendSerialGpsPostion() {
-
-	//TODO remove / debug
-	mavlink_msg_global_position_int_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, millisecondsSinceBoot, 494422665, 101512589, 10000, 10000, 0, 0, 0, 65);
-	len = mavlink_msg_to_send_buffer(buf, &msg);
-	SERIAL_PORT.write(buf, len);
-
-
 #if defined(UseGPS)
 	if (haveAGpsLock())
 	{
 #if defined(AltitudeHoldBaro)
-		mavlink_msg_global_position_int_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, millisecondsSinceBoot, currentPosition.latitude, currentPosition.longitude, getGpsAltitude(), (getGpsAltitude() - baroGroundAltitude * 1000), 0, 0, 0, ((int)(trueNorthHeading / M_PI * 180.0) + 360) % 360);
+		mavlink_msg_global_position_int_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, millisecondsSinceBootWhileArmed, currentPosition.latitude, currentPosition.longitude, getGpsAltitude(), (getGpsAltitude() - baroGroundAltitude * 1000), 65535, getGpsSpeed(), getCourse(), ((int)(trueNorthHeading / M_PI * 180.0) + 360) % 360);
 #else
-		mavlink_msg_global_position_int_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, millisecondsSinceBoot, currentPosition.latitude, currentPosition.longitude, getGpsAltitude(), getGpsAltitude(), 0, 0, 0, ((int)(trueNorthHeading / M_PI * 180.0) + 360) % 360);
+		mavlink_msg_global_position_int_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, millisecondsSinceBootWhileArmed, currentPosition.latitude, currentPosition.longitude, getGpsAltitude(), getGpsAltitude(), 0, 0, 0, ((int)(trueNorthHeading / M_PI * 180.0) + 360) % 360);
 #endif
 		len = mavlink_msg_to_send_buffer(buf, &msg);
 		SERIAL_PORT.write(buf, len);
@@ -310,9 +312,33 @@ void sendSerialGpsPostion() {
 #endif
 }
 
+void sendSerialNavControllerOutput() {
+#if defined(UseGPSNavigator)
+	if(missionNbPoint > 0) {
+		mavlink_msg_nav_controller_output_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, gpsRollAxisCorrection, gpsPitchAxisCorrection, gpsYawAxisCorrection, angleToWaypoint, distanceToDestination, (missionPositionToReach.altitude / 10 - getBaroAltitude()), 0, 0);
+		len = mavlink_msg_to_send_buffer(buf, &msg);
+		SERIAL_PORT.write(buf, len);
+	}
+#endif
+}
+
+void sendSerialMotorOutput() {
+	mavlink_msg_servo_output_raw_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, millisecondsSinceBootWhileArmed, 0, motorCommand[0], motorCommand[1], motorCommand[2], motorCommand[3], motorCommand[4], motorCommand[5],motorCommand[6], motorCommand[7]);
+	len = mavlink_msg_to_send_buffer(buf, &msg);
+	SERIAL_PORT.write(buf, len);
+}
+
 void sendSerialRawPressure() {
 #if defined(AltitudeHoldBaro)
-	mavlink_msg_raw_pressure_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, millisecondsSinceBoot, readRawPressure(), 0,0, readRawTemperature());
+	mavlink_msg_raw_pressure_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, millisecondsSinceBootWhileArmed, readRawPressure(), 0,0, readRawTemperature());
+	len = mavlink_msg_to_send_buffer(buf, &msg);
+	SERIAL_PORT.write(buf, len);
+#endif
+}
+
+void sendSerialScaledPressure() {
+#if defined(AltitudeHoldBaro)
+	mavlink_msg_scaled_pressure_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, millisecondsSinceBootWhileArmed, pressure, 0, readRawTemperature());
 	len = mavlink_msg_to_send_buffer(buf, &msg);
 	SERIAL_PORT.write(buf, len);
 #endif
@@ -320,9 +346,19 @@ void sendSerialRawPressure() {
 
 void sendSerialRcRaw() {
 #if defined(UseRSSIFaileSafe)
-	mavlink_msg_rc_channels_raw_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, millisecondsSinceBoot, 0, receiverCommand[THROTTLE], receiverCommand[XAXIS], receiverCommand[YAXIS], receiverCommand[ZAXIS], receiverCommand[MODE], receiverCommand[AUX1], receiverCommand[AUX2], receiverCommand[AUX3], rssiRawValue * 2.55);
+	mavlink_msg_rc_channels_raw_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, millisecondsSinceBootWhileArmed, 0, receiverCommand[receiverChannelMap[THROTTLE]], receiverCommand[receiverChannelMap[XAXIS]], receiverCommand[receiverChannelMap[YAXIS]], receiverCommand[receiverChannelMap[ZAXIS]], receiverCommand[receiverChannelMap[MODE]], receiverCommand[receiverChannelMap[AUX1]], receiverCommand[receiverChannelMap[AUX2]], receiverCommand[receiverChannelMap[AUX3]], rssiRawValue * 2.55);
 #else
-	mavlink_msg_rc_channels_raw_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, millisecondsSinceBoot, 0, receiverCommand[THROTTLE], receiverCommand[XAXIS], receiverCommand[YAXIS], receiverCommand[ZAXIS], receiverCommand[MODE], receiverCommand[AUX1], receiverCommand[AUX2], receiverCommand[AUX3], 0);
+	mavlink_msg_rc_channels_raw_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, millisecondsSinceBootWhileArmed, 0, receiverCommand[receiverChannelMap[THROTTLE]], receiverCommand[receiverChannelMap[XAXIS]], receiverCommand[receiverChannelMap[YAXIS]], receiverCommand[receiverChannelMap[ZAXIS]], receiverCommand[receiverChannelMap[MODE]], receiverCommand[receiverChannelMap[AUX1]], receiverCommand[receiverChannelMap[AUX2]], receiverCommand[receiverChannelMap[AUX3]], 255);
+#endif
+	len = mavlink_msg_to_send_buffer(buf, &msg);
+	SERIAL_PORT.write(buf, len);
+}
+
+void sendSerialRcScaled() {
+#if defined(UseRSSIFaileSafe)
+	mavlink_msg_rc_channels_scaled_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, millisecondsSinceBootWhileArmed, 0, (receiverCommand[receiverChannelMap[THROTTLE]] - 1500) * 2000, (receiverCommand[receiverChannelMap[XAXIS]] - 1500) * 2000, (receiverCommand[receiverChannelMap[YAXIS]] - 1500) * 2000, (receiverCommand[receiverChannelMap[ZAXIS]] - 1500) * 2000, (receiverCommand[receiverChannelMap[MODE]] - 1500) * 2000, (receiverCommand[receiverChannelMap[AUX1]] - 1500) * 2000, (receiverCommand[receiverChannelMap[AUX2]] - 1500) * 2000, (receiverCommand[receiverChannelMap[AUX3]] - 1500) * 2000, rssiRawValue * 2.55);
+#else
+	mavlink_msg_rc_channels_scaled_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, millisecondsSinceBootWhileArmed, 0, (receiverCommand[receiverChannelMap[THROTTLE]] - 1500) * 2000, (receiverCommand[receiverChannelMap[XAXIS]] - 1500) * 2000, (receiverCommand[receiverChannelMap[YAXIS]] - 1500) * 2000, (receiverCommand[receiverChannelMap[ZAXIS]] - 1500) * 2000, (receiverCommand[receiverChannelMap[MODE]] - 1500) * 2000, (receiverCommand[receiverChannelMap[AUX1]] - 1500) * 2000, (receiverCommand[receiverChannelMap[AUX2]] - 1500) * 2000, (receiverCommand[receiverChannelMap[AUX3]] - 1500) * 2000, 255);
 #endif
 	len = mavlink_msg_to_send_buffer(buf, &msg);
 	SERIAL_PORT.write(buf, len);
@@ -399,7 +435,11 @@ void sendSerialSysStatus() {
 	controlSensorsHealthy = controlSensorsPresent;
 
 #if defined(BattMonitor)
+#if defined(BM_EXTENDED)
 	mavlink_msg_sys_status_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, controlSensorsPresent, controlSensorEnabled, controlSensorsHealthy, 0, batteryData[0].voltage * 10, (int)(batteryData[0].current*1000), -1, system_dropped_packets, 0, 0, 0, 0, 0);
+#else
+	mavlink_msg_sys_status_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, controlSensorsPresent, controlSensorEnabled, controlSensorsHealthy, 0, batteryData[0].voltage * 10, -1, -1, system_dropped_packets, 0, 0, 0, 0, 0);
+#endif
 #else
 	mavlink_msg_sys_status_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, controlSensorsPresent, controlSensorEnabled, controlSensorsHealthy, 0, 0, 0, 0, system_dropped_packets, 0, 0, 0, 0, 0);
 #endif
@@ -1020,6 +1060,35 @@ void changeAndSendParameter() {
 	}
 }
 
+void sendQueuedParameters() { // sending complete parameter list divided into four parts to minimize delay
+	if(paramListPartIndicator >= 0 && paramListPartIndicator <= 3) {
+		if(paramListPartIndicator == 0) {
+			sendParameterListPart1();
+		}
+		else if(paramListPartIndicator == 1) {
+			sendParameterListPart2();
+		}
+		else if(paramListPartIndicator == 2) {
+			sendParameterListPart3();
+		}
+		else if(paramListPartIndicator == 3) {
+			sendParameterListPart4();
+		}
+		paramListPartIndicator++;
+	}
+	else {
+		paramListPartIndicator = -1;
+	}
+}
+
+void receieveWaypoint() { // request waypoints one by one from GCS
+	if (waypointReceiving && waypointReceiveIndex <= waypointsToReceive) {
+		mavlink_msg_mission_request_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, waypointReceiveIndex);
+		len = mavlink_msg_to_send_buffer(buf, &msg);
+		SERIAL_PORT.write(buf, len);
+	}
+}
+
 void readSerialCommand() {
 	while(SERIAL_PORT.available() > 0) {
 
@@ -1027,10 +1096,12 @@ void readSerialCommand() {
 		//try to get a new message
 		if (mavlink_parse_char(MAVLINK_COMM_0, c, &msg, &status)) {
 			// Handle message
-			if(msg.msgid == MAVLINK_MSG_ID_COMMAND_LONG)
-			{
-				uint8_t result = 0;
-				uint8_t command = mavlink_msg_command_long_get_command(&msg);
+			uint8_t result = 0;
+			uint8_t command = 0;
+			switch(msg.msgid) {
+
+			case MAVLINK_MSG_ID_COMMAND_LONG:
+				command = mavlink_msg_command_long_get_command(&msg);
 
 				switch(command) {
 					// (yet) unsupported commands/features
@@ -1125,16 +1196,18 @@ void readSerialCommand() {
 						}
 					}	
 					break;
-				}
 
-				mavlink_msg_command_ack_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, command, result);
-				len = mavlink_msg_to_send_buffer(buf, &msg);
-				SERIAL_PORT.write(buf, len);
-			}
-			else if(msg.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_LIST)	{ // sending complete parameter list to GCS
+					mavlink_msg_command_ack_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, command, result);
+					len = mavlink_msg_to_send_buffer(buf, &msg);
+					SERIAL_PORT.write(buf, len);
+				}
+				break;
+
+			case MAVLINK_MSG_ID_PARAM_REQUEST_LIST:	 // sending complete parameter list to GCS
 				paramListPartIndicator = indexCounter = 0;
-			}
-			else if(msg.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_READ) { // sending a specific parameter to GCS
+				break;
+
+			case MAVLINK_MSG_ID_PARAM_REQUEST_READ:  // sending a specific parameter to GCS
 				mavlink_param_request_read_t read;
 				mavlink_msg_param_request_read_decode(&msg, &read);
 
@@ -1183,45 +1256,52 @@ void readSerialCommand() {
 						SERIAL_PORT.write(buf, len);
 					}
 				}
-			}
-			else if(msg.msgid == MAVLINK_MSG_ID_PARAM_SET) { // set one specific onboard parameter
+				break;
+
+			case MAVLINK_MSG_ID_PARAM_SET:  // set one specific onboard parameter
 				if(!motorArmed) { // added for security reason, as the software is shortly blocked by this command
 					mavlink_msg_param_set_decode(&msg, &set);
 					key = (char*) set.param_id;
 					parameterMatch = findParameter(key);
 					parameterChangeIndicator = 0;
 				}
-			}
-			else if(msg.msgid == MAVLINK_MSG_ID_MISSION_REQUEST_LIST) { // requesting complete waypoint list from AQ
+				break;
+
+			case MAVLINK_MSG_ID_MISSION_REQUEST_LIST:  // requesting complete waypoint list from AQ
 #if defined(UseGPSNavigator)
 				mavlink_msg_mission_count_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, missionNbPoint);
 				len = mavlink_msg_to_send_buffer(buf, &msg);
 				SERIAL_PORT.write(buf, len);
-#else
-				mavlink_msg_mission_count_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, 0);
-				len = mavlink_msg_to_send_buffer(buf, &msg);
-				SERIAL_PORT.write(buf, len);
+
+				waypointTimeLastSent = millis();
+				waypointSending = true;
+				waypointReceiving = false;
 #endif
-			}
-			else if(msg.msgid == MAVLINK_MSG_ID_MISSION_REQUEST) { // GCS requests a specific waypoint
+				break;
+
+			case MAVLINK_MSG_ID_MISSION_REQUEST: // GCS requests a specific waypoint
 				__mavlink_mission_request_t requestedWaypointPacket;
 				mavlink_msg_mission_request_decode(&msg, &requestedWaypointPacket);
-				int waypointNumber = requestedWaypointPacket.seq;
+				waypointSendIndex = requestedWaypointPacket.seq;
 
-				if(waypointNumber == missionNbPoint) {
+				if(waypointSendIndex == missionNbPoint) {
 					mavlink_msg_mission_item_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, requestedWaypointPacket.seq,
-						MAV_FRAME_GLOBAL, MAV_CMD_NAV_WAYPOINT, 1, 1, 0, MIN_DISTANCE_TO_REACHED, 0, 0, waypoint[waypointNumber].longitude,
-						waypoint[waypointNumber].latitude, waypoint[waypointNumber].altitude);
+						MAV_FRAME_GLOBAL, MAV_CMD_NAV_WAYPOINT, 1, 1, 0, MIN_DISTANCE_TO_REACHED, 0, 0, waypoint[waypointSendIndex].longitude,
+						waypoint[waypointSendIndex].latitude, waypoint[waypointSendIndex].altitude);
 				}
 				else {
 					mavlink_msg_mission_item_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, requestedWaypointPacket.seq,
-						MAV_FRAME_GLOBAL, MAV_CMD_NAV_WAYPOINT, 0, 1, 0, MIN_DISTANCE_TO_REACHED, 0, 0, waypoint[waypointNumber].longitude,
-						waypoint[waypointNumber].latitude, waypoint[waypointNumber].altitude);
+						MAV_FRAME_GLOBAL, MAV_CMD_NAV_WAYPOINT, 0, 1, 0, MIN_DISTANCE_TO_REACHED, 0, 0, waypoint[waypointSendIndex].longitude,
+						waypoint[waypointSendIndex].latitude, waypoint[waypointSendIndex].altitude);
 				}
 				len = mavlink_msg_to_send_buffer(buf, &msg);
 				SERIAL_PORT.write(buf, len);
-			}
-			else if(msg.msgid == MAVLINK_MSG_ID_MISSION_COUNT) { // number of waypoints to be sent from GCS to AQ
+
+				// update last waypoint comm stamp
+				waypointTimeLastSent = millis();
+				break;
+
+			case MAVLINK_MSG_ID_MISSION_COUNT:  // number of waypoints to be sent from GCS to AQ
 				__mavlink_mission_count_t waypointListPacket;
 				mavlink_msg_mission_count_decode(&msg, &waypointListPacket);
 
@@ -1231,15 +1311,22 @@ void readSerialCommand() {
 					SERIAL_PORT.write(buf, len);
 				}
 				else {
-					waypointsToRetrieve = waypointListPacket.count;
-					waypointCounter = 0;
+					waypointsToReceive = waypointListPacket.count;
+					waypointTimeLastReceived = millis();
+					waypointReceiving = true;
+					waypointSending = false;
+					waypointReceiveIndex = 0;
+					waypointTimeLastRequest = 0;
 				}
-			}
-			else if(msg.msgid == MAVLINK_MSG_ID_MISSION_ITEM) { // add a waypoint from GCS to the waypoint list of AQ
+				break;
+
+			case MAVLINK_MSG_ID_MISSION_ITEM: // add a waypoint from GCS to the waypoint list of AQ
+				result = MAV_MISSION_ACCEPTED;
+
 				__mavlink_mission_item_t waypointPacket;
 				mavlink_msg_mission_item_decode(&msg, &waypointPacket);
 
-				missionNbPoint = waypointCounter - 1;
+				missionNbPoint = waypointReceiveIndex - 1;
 				if(missionNbPoint < 0) {
 					missionNbPoint = 0;
 				}
@@ -1247,59 +1334,73 @@ void readSerialCommand() {
 				waypoint[missionNbPoint].latitude = waypointPacket.x;
 				waypoint[missionNbPoint].longitude = waypointPacket.y;
 				waypoint[missionNbPoint].altitude = waypointPacket.z;
-			}
-			else if(msg.msgid == MAVLINK_MSG_ID_MISSION_CLEAR_ALL) { // delete all waypoints of AQ
-				//for (uint8_t counter = 0; counter < MAX_WAYPOINTS; counter++) {
-				//	waypoint[counter] = GPS_INVALID_POSITION;
 
-				//	//mavlink_msg_statustext_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0, (char*)counter);
-				//	//len = mavlink_msg_to_send_buffer(buf, &msg);
+				if (waypointPacket.seq != waypointReceiveIndex) {
+					result = MAV_MISSION_INVALID_SEQUENCE;
+					mavlink_msg_mission_ack_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, result);
+					len = mavlink_msg_to_send_buffer(buf, &msg);
+					SERIAL_PORT.write(buf, len);
+					break;
+				}
+
+				// update waypoint receiving state machine
+				waypointTimeLastReceived = millis();
+				waypointTimeLastRequest = 0;
+				waypointReceiveIndex++;
+
+				if (waypointReceiveIndex > waypointsToReceive) {
+					mavlink_msg_mission_ack_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, result);
+					len = mavlink_msg_to_send_buffer(buf, &msg);
+					SERIAL_PORT.write(buf, len);
+					waypointReceiving = false;
+				}        
+				break;
+
+			case MAVLINK_MSG_ID_MISSION_CLEAR_ALL:  // delete all waypoints of AQ
+				for (uint8_t counter = 0; counter < MAX_WAYPOINTS; counter++) {
+					waypoint[counter] = GPS_INVALID_POSITION;
+				}
+				//	//mavlink_msg_statustext_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &status, 0, (char*)counter);
+				//	//len = mavlink_msg_to_send_buffer(buf, &status);
 				//	//SERIAL_PORT.write(buf, len);
-				//}
-				for (int16_t i=0; i<10; i++) {
+				//
+				// Sending ACK message three times to make sure it's received
+				for (int16_t i=0; i<3; i++) {
 					mavlink_msg_mission_ack_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, MAV_MISSION_ACCEPTED);
 					len = mavlink_msg_to_send_buffer(buf, &msg);
 					SERIAL_PORT.write(buf, len);
 				}
+				break;
+
+			case MAVLINK_MSG_ID_MISSION_ACK: 
+				// turn off waypoint sending
+				waypointSending = false;
+				break;
 			}
 		}
 	}
+
 	system_dropped_packets += status.packet_rx_drop_count;
-}
 
-void sendQueuedParameters() { // sending complete parameter list divided into four parts to minimize delay
-	if(paramListPartIndicator >= 0 && paramListPartIndicator <= 3) {
-		if(paramListPartIndicator == 0) {
-			sendParameterListPart1();
-		}
-		else if(paramListPartIndicator == 1) {
-			sendParameterListPart2();
-		}
-		else if(paramListPartIndicator == 2) {
-			sendParameterListPart3();
-		}
-		else if(paramListPartIndicator == 3) {
-			sendParameterListPart4();
-		}
-		paramListPartIndicator++;
+	if (!waypointReceiving && !waypointSending) {
+		return;
 	}
-	else {
-		paramListPartIndicator = -1;
-	}
-}
 
-void retrieveWaypoints() { // request waypoints one by one from GCS
-	if(waypointCounter >= 0 && waypointCounter < waypointsToRetrieve) {
-		mavlink_msg_mission_request_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, waypointCounter);
-		len = mavlink_msg_to_send_buffer(buf, &msg);
-		SERIAL_PORT.write(buf, len);
-		waypointCounter++;
+	uint32_t tnow = millis();
+
+	if (waypointReceiving && waypointReceiveIndex <= waypointsToReceive && tnow > waypointTimeLastRequest) {
+		waypointTimeLastRequest = tnow;
+		receieveWaypoint();
 	}
-	else {
-		mavlink_msg_mission_ack_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, MAV_MISSION_ACCEPTED);
-		len = mavlink_msg_to_send_buffer(buf, &msg);
-		SERIAL_PORT.write(buf, len);
-		waypointCounter = waypointsToRetrieve = -1;
+
+	// stop waypoint sending if timeout
+	if (waypointSending && (tnow - waypointTimeLastSent) > waypointSendTimeout) {
+		waypointSending = false;
+	}
+
+	// stop waypoint receiving if timeout
+	if (waypointReceiving && (tnow - waypointTimeLastReceived) > waypointReceiveTimeout) {
+		waypointReceiving = false;
 	}
 }
 
@@ -1307,18 +1408,25 @@ void sendSerialVehicleData() {
 	sendSerialHudData();
 	sendSerialAttitude();
 	sendSerialRcRaw();
+	sendSerialRcScaled();
 	sendSerialRawPressure();
+	sendSerialScaledPressure();
 	sendSerialRawIMU();
 	sendSerialGpsPostion();
 	sendSerialSysStatus();
+	sendSerialNavControllerOutput();
+	sendSerialMotorOutput();
 }
 
 void sendSerialTelemetry() {
-	sendSerialVehicleData();
 	updateFlightTime();
-	sendQueuedParameters();
-	changeAndSendParameter();
-	retrieveWaypoints();
+
+	if (!waypointReceiving && !waypointSending) {
+		// Don't interfere with mission transfer
+		sendSerialVehicleData();
+		sendQueuedParameters();
+		changeAndSendParameter();
+	}
 }
 
 #endif //#define _AQ_MAVLINK_H_
