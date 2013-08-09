@@ -21,7 +21,7 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 #ifndef _AQ_MAVLINK_H_
 #define _AQ_MAVLINK_H_
 
-#define MAV_COMPONENT_ID MAV_COMP_ID_IMU
+#define MAV_COMPONENT_ID MAV_COMP_ID_ALL
 
 #ifndef MAV_SYSTEM_ID
 #define MAV_SYSTEM_ID 100
@@ -40,15 +40,21 @@ uint16_t len;
 
 // Variables for sending and receiving waypoints
 bool waypointSending = false;
-bool waypointReceiving = false; 
+bool waypointReceiving = false;
+
 unsigned long waypointTimeLastSent = 0;
 unsigned long waypointTimeLastReceived = 0;
 unsigned long waypointTimeLastRequest = 0;
 unsigned long waypointSendTimeout = 1000; // 1 second
 unsigned long waypointReceiveTimeout = 1000;
-int waypointReceiveIndex = -1;
-int waypointSendIndex = -1;
-int waypointsToReceive = -1;
+
+uint8_t navFrame = MAV_FRAME_GLOBAL_RELATIVE_ALT;
+
+int waypointsToRequest = 0; // Total number of waypoints to be requested
+int waypointRequestIndex = -1; // Index of waypont to be requested
+int waypointLastRequestedIndex = -1; // Index of last requested waypoint
+int waypointSendIndex = -1; // Index of waypoint to be sent
+
 const char* waypointLimitReachedWarning = "Only 16 waypoints in one mission allowed to be executed!";
 
 // Variables for writing and sending parameters
@@ -153,7 +159,7 @@ const char* parameterNameGPSYawI = "GPS Yaw_I";
 const char* parameterNameGPSYawD = "GPS Yaw_D";
 #endif
 
-parameterTypeIndicator paramIndicator = NONE;
+parameterTypeIndicator PIDIndicator = NONE;
 float *parameterFloat;
 byte *parameterByte;
 int *parameterInt;
@@ -661,138 +667,138 @@ bool checkParameterMatch(const char* parameterName, char* key) {
 }
 
 int findParameter(char* key) {
-	paramIndicator = NONE;
+	PIDIndicator = NONE;
 	parameterFloat = NULL;
 	parameterByte = NULL;
 	parameterInt = NULL;
 	parameterULong = NULL;
 
 	if (checkParameterMatch(parameterNameRateRollP, key)) {
-		paramIndicator = P;
+		PIDIndicator = P;
 		return RATE_XAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameRateRollI, key)) {
-		paramIndicator = I;
+		PIDIndicator = I;
 		return RATE_XAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameRateRollD, key)) {
-		paramIndicator = D;
+		PIDIndicator = D;
 		return RATE_XAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameRatePitchP, key)) {
-		paramIndicator = P;
+		PIDIndicator = P;
 		return RATE_YAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameRatePitchI, key)) {
-		paramIndicator = I;
+		PIDIndicator = I;
 		return RATE_YAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameRatePitchD, key)) {
-		paramIndicator = D;
+		PIDIndicator = D;
 		return RATE_YAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameRateRotationFactor, key)) {
-		paramIndicator = D;
+		PIDIndicator = NONE;
 		parameterFloat = &rotationSpeedFactor;
 		return -1;
 	}
 	if (checkParameterMatch(parameterNameAttitudeRollP, key)) {
-		paramIndicator = P;
+		PIDIndicator = P;
 		return ATTITUDE_XAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameAttitudeRollI, key)) {
-		paramIndicator = I;
+		PIDIndicator = I;
 		return ATTITUDE_XAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameAttitudeRollD, key)) {
-		paramIndicator = D;
+		PIDIndicator = D;
 		return ATTITUDE_XAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameAttitudePitchP, key)) {
-		paramIndicator = P;
+		PIDIndicator = P;
 		return ATTITUDE_YAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameAttitudePitchI, key)) {
-		paramIndicator = I;
+		PIDIndicator = I;
 		return ATTITUDE_YAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameAttitudePitchD, key)) {
-		paramIndicator = D;
+		PIDIndicator = D;
 		return ATTITUDE_YAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameAttitudeGyroRollP, key)) {
-		paramIndicator = P;
+		PIDIndicator = P;
 		return ATTITUDE_GYRO_XAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameAttitudeGyroRollI, key)) {
-		paramIndicator = I;
+		PIDIndicator = I;
 		return ATTITUDE_GYRO_XAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameAttitudeGyroRollD, key)) {
-		paramIndicator = D;
+		PIDIndicator = D;
 		return ATTITUDE_GYRO_XAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameAttitudeGyroPitchP, key)) {
-		paramIndicator = P;
+		PIDIndicator = P;
 		return ATTITUDE_GYRO_YAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameAttitudeGyroPitchI, key)) {
-		paramIndicator = I;
+		PIDIndicator = I;
 		return ATTITUDE_GYRO_YAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameAttitudeGyroPitchD, key)) {
-		paramIndicator = D;
+		PIDIndicator = D;
 		return ATTITUDE_GYRO_YAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameYawP, key)) {
-		paramIndicator = P;
+		PIDIndicator = P;
 		return ZAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameYawI, key)) {
-		paramIndicator = I;
+		PIDIndicator = I;
 		return ZAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameYawD, key)) {
-		paramIndicator = D;
+		PIDIndicator = D;
 		return ZAXIS_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameHeadingP, key)) {
-		paramIndicator = P;
+		PIDIndicator = P;
 		return HEADING_HOLD_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameHeadingI, key)) {
-		paramIndicator = I;
+		PIDIndicator = I;
 		return HEADING_HOLD_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameHeadingD, key)) {
-		paramIndicator = D;
+		PIDIndicator = D;
 		return HEADING_HOLD_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameHeadingConfig, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterByte = &headingHoldConfig;
 		return -1;
 	}
 	if (checkParameterMatch(parameterNameMinThrottle, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterInt = &minArmedThrottle;
 		return -1;
 	}
 
 #if defined(BattMonitor)
 	if (checkParameterMatch(parameterNameBattMonAlarmVoltage, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterFloat = &batteryMonitorAlarmVoltage;
 		setBatteryCellVoltageThreshold(set.param_value);
 		return -1;
 	}
 	if (checkParameterMatch(parameterNameBattMonThrottleTarget, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterInt = &batteryMonitorThrottleTarget;
 		return -1;
 	}
 	if (checkParameterMatch(parameterNameBattMonGoingDownTime, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterULong = &batteryMonitorGoingDownTime;
 		return -1;
 	}
@@ -800,52 +806,52 @@ int findParameter(char* key) {
 
 #if defined(CameraControl)
 	if (checkParameterMatch(parameterNameCamMode, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterInt = &cameraMode;
 		return -1;
 	}
 	if (checkParameterMatch(parameterNameCamPitchScale, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterFloat = &mCameraPitch;
 		return -1;
 	}
 	if (checkParameterMatch(parameterNameCamRollScale, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterFloat = &mCameraRoll;
 		return -1;
 	}
 	if (checkParameterMatch(parameterNameCamYawScale, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterFloat = &mCameraYaw;
 		return -1;
 	}
 	if (checkParameterMatch(parameterNameCamPitchServoMin, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterInt = &servoMinPitch;
 		return -1;
 	}
 	if (checkParameterMatch(parameterNameCamRollServoMin, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterInt = &servoMinRoll;
 		return -1;
 	}
 	if (checkParameterMatch(parameterNameCamYawServoMin, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterInt = &servoMinYaw;
 		return -1;
 	}
 	if (checkParameterMatch(parameterNameCamPitchServoMax, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterInt = &servoMaxPitch;
 		return -1;
 	}
 	if (checkParameterMatch(parameterNameCamRollServoMax, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterInt = &servoMaxRoll;
 		return -1;
 	}
 	if (checkParameterMatch(parameterNameCamYawServoMax, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterInt = &servoMaxYaw;
 		return -1;
 	}
@@ -853,22 +859,22 @@ int findParameter(char* key) {
 
 #if defined(AltitudeHoldBaro) || defined(AltitudeHoldRangeFinder)
 	if (checkParameterMatch(parameterNameAHminThrottleAdjust, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterInt = &minThrottleAdjust;
 		return -1;
 	}
 	if (checkParameterMatch(parameterNameAHmaxThrottleAdjust, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterInt = &maxThrottleAdjust;
 		return -1;
 	}
 	if (checkParameterMatch(parameterNameAHBumpValue, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterInt = &altitudeHoldBump;
 		return -1;
 	}
 	if (checkParameterMatch(parameterNameAHPanicValue, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterInt = &altitudeHoldPanicStickMovement;
 		return -1;
 	}
@@ -876,185 +882,198 @@ int findParameter(char* key) {
 
 #if defined(AltitudeHoldBaro)
 	if (checkParameterMatch(parameterNameAHBaroSmooth, key)) {
-		paramIndicator = NONE;
+		PIDIndicator = NONE;
 		parameterFloat = &baroSmoothFactor;
 		return -1;
 	}
 	if (checkParameterMatch(parameterNameBaroP, key)) {
-		paramIndicator = P;
+		PIDIndicator = P;
 		return BARO_ALTITUDE_HOLD_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameBaroI, key)) {
-		paramIndicator = I;
+		PIDIndicator = I;
 		return BARO_ALTITUDE_HOLD_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameBaroD, key)) {
-		paramIndicator = D;
+		PIDIndicator = D;
 		return BARO_ALTITUDE_HOLD_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameBaroWindUpGuard, key)) {
-		paramIndicator = windUpGuard;
+		PIDIndicator = windUpGuard;
 		return BARO_ALTITUDE_HOLD_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameZDampeningP, key)) {
-		paramIndicator = P;
+		PIDIndicator = P;
 		return ZDAMPENING_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameZDampeningI, key)) {
-		paramIndicator = I;
+		PIDIndicator = I;
 		return ZDAMPENING_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameZDampeningD, key)) {
-		paramIndicator = D;
+		PIDIndicator = D;
 		return ZDAMPENING_PID_IDX;
 	}
 #endif
 
 #if defined(AltitudeHoldRangeFinder)
 	if (checkParameterMatch(parameterNameRangeFinderP, key)) {
-		paramIndicator = P;
+		PIDIndicator = P;
 		return SONAR_ALTITUDE_HOLD_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameRangeFinderI, key)) {
-		paramIndicator = I;
+		PIDIndicator = I;
 		return SONAR_ALTITUDE_HOLD_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameRangeFinderD, key)) {
-		paramIndicator = D;
+		PIDIndicator = D;
 		return SONAR_ALTITUDE_HOLD_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameRangeFinderWindUpGuard, key)) {
-		paramIndicator = windUpGuard;
+		PIDIndicator = windUpGuard;
 		return SONAR_ALTITUDE_HOLD_PID_IDX;
 	}
 #endif
 
 #if defined(UseGPSNavigator)
 	if (checkParameterMatch(parameterNameGPSRollP, key)) {
-		paramIndicator = P;
+		PIDIndicator = P;
 		return GPSROLL_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameGPSRollI, key)) {
-		paramIndicator = I;
+		PIDIndicator = I;
 		return GPSROLL_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameGPSRollD, key)) {
-		paramIndicator = D;
+		PIDIndicator = D;
 		return GPSROLL_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameGPSPitchP, key)) {
-		paramIndicator = P;
+		PIDIndicator = P;
 		return GPSPITCH_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameGPSPitchI, key)) {
-		paramIndicator = I;
+		PIDIndicator = I;
 		return GPSPITCH_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameGPSPitchD, key)) {
-		paramIndicator = D;
+		PIDIndicator = D;
 		return GPSPITCH_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameGPSYawP, key)) {
-		paramIndicator = P;
+		PIDIndicator = P;
 		return GPSYAW_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameGPSYawI, key)) {
-		paramIndicator = I;
+		PIDIndicator = I;
 		return GPSYAW_PID_IDX;
 	}
 	if (checkParameterMatch(parameterNameGPSYawD, key)) {
-		paramIndicator = D;
+		PIDIndicator = D;
 		return GPSYAW_PID_IDX;
 	}
 #endif
 
-	return 0;
+	return -2; // No parameter found, should not happen
 }
 
 void changeAndSendParameter() {
 	if(parameterChangeIndicator == 0) {
-		// Only write and emit changes if there is actually a difference AND only write if new value is NOT "not-a-number" AND is NOT infinit
-		if (paramIndicator == P) {
-			if (PID[parameterMatch].P != set.param_value && !isnan(set.param_value) && !isinf(set.param_value)) {
-				PID[parameterMatch].P = set.param_value;
-				writeEEPROM();
-				// Report back new value
-				mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, PID[parameterMatch].P, parameterType, parameterListSize, -1);
-				len = mavlink_msg_to_send_buffer(buf, &msg);
-				SERIAL_PORT.write(buf, len);
-			}
+		if(parameterMatch == -2) // no parameter matched, should not happen
+		{
+			mavlink_msg_statustext_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0, "Write failed");
+			len = mavlink_msg_to_send_buffer(buf, &msg);
+			SERIAL_PORT.write(buf, len);
 		}
-		else if (paramIndicator == I) {
-			if (PID[parameterMatch].I != set.param_value && !isnan(set.param_value) && !isinf(set.param_value)) {
-				PID[parameterMatch].I = set.param_value;
-				writeEEPROM();
-				// Report back new value
-				mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, PID[parameterMatch].I, parameterType, parameterListSize, -1);
-				len = mavlink_msg_to_send_buffer(buf, &msg);
-				SERIAL_PORT.write(buf, len);
-			}
-		}
-		else if (paramIndicator == D) {
-			if (PID[parameterMatch].D != set.param_value && !isnan(set.param_value) && !isinf(set.param_value)) {
-				PID[parameterMatch].D = set.param_value;
-				writeEEPROM();
-				// Report back new value
-				mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, PID[parameterMatch].D, parameterType, parameterListSize, -1);
-				len = mavlink_msg_to_send_buffer(buf, &msg);
-				SERIAL_PORT.write(buf, len);
-			}
-		}
-		else if (paramIndicator == windUpGuard) {
-			if (PID[parameterMatch].windupGuard != set.param_value && !isnan(set.param_value) && !isinf(set.param_value)) {
-				PID[parameterMatch].windupGuard = set.param_value;
-				writeEEPROM();
-				// Report back new value
-				mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, PID[parameterMatch].windupGuard, parameterType, parameterListSize, -1);
-				len = mavlink_msg_to_send_buffer(buf, &msg);
-				SERIAL_PORT.write(buf, len);
-			}
-		}
-		else if (paramIndicator == NONE) {
-			if (parameterFloat != NULL) {
-				if (*parameterFloat != set.param_value && !isnan(set.param_value) && !isinf(set.param_value)) {
-					*parameterFloat = set.param_value;
+		else
+		{
+			// Only write and emit changes if there is actually a difference AND only write if new value is NOT "not-a-number" AND is NOT infinit
+			if (PIDIndicator == P) {
+				if (PID[parameterMatch].P != set.param_value && !isnan(set.param_value) && !isinf(set.param_value)) {
+					PID[parameterMatch].P = set.param_value;
 					writeEEPROM();
 					// Report back new value
-					mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, *parameterFloat, parameterType, parameterListSize, -1);
+					mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, PID[parameterMatch].P, parameterType, parameterListSize, -1);
 					len = mavlink_msg_to_send_buffer(buf, &msg);
 					SERIAL_PORT.write(buf, len);
 				}
 			}
-			else if (parameterByte != NULL) {
-				if (*parameterByte != set.param_value && !isnan(set.param_value) && !isinf(set.param_value)) {
-					*parameterByte = set.param_value;
+			else if (PIDIndicator == I) {
+				if (PID[parameterMatch].I != set.param_value && !isnan(set.param_value) && !isinf(set.param_value)) {
+					PID[parameterMatch].I = set.param_value;
 					writeEEPROM();
 					// Report back new value
-					mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, (float)*parameterByte, parameterType, parameterListSize, -1);
+					mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, PID[parameterMatch].I, parameterType, parameterListSize, -1);
 					len = mavlink_msg_to_send_buffer(buf, &msg);
 					SERIAL_PORT.write(buf, len);
 				}
 			}
-			else if (parameterInt != NULL) {
-				if (*parameterInt != set.param_value && !isnan(set.param_value) && !isinf(set.param_value)) {
-					*parameterInt = set.param_value;
+			else if (PIDIndicator == D) {
+				if (PID[parameterMatch].D != set.param_value && !isnan(set.param_value) && !isinf(set.param_value)) {
+					PID[parameterMatch].D = set.param_value;
 					writeEEPROM();
 					// Report back new value
-					mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, (float)*parameterInt, parameterType, parameterListSize, -1);
+					mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, PID[parameterMatch].D, parameterType, parameterListSize, -1);
 					len = mavlink_msg_to_send_buffer(buf, &msg);
 					SERIAL_PORT.write(buf, len);
 				}
 			}
-			else if (parameterULong != NULL) {
-				if (*parameterULong != set.param_value && !isnan(set.param_value) && !isinf(set.param_value)) {
-					*parameterULong = set.param_value;
+			else if (PIDIndicator == windUpGuard) {
+				if (PID[parameterMatch].windupGuard != set.param_value && !isnan(set.param_value) && !isinf(set.param_value)) {
+					PID[parameterMatch].windupGuard = set.param_value;
 					writeEEPROM();
 					// Report back new value
-					mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, (float)*parameterULong, parameterType, parameterListSize, -1);
+					mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, PID[parameterMatch].windupGuard, parameterType, parameterListSize, -1);
 					len = mavlink_msg_to_send_buffer(buf, &msg);
 					SERIAL_PORT.write(buf, len);
 				}
 			}
+			else if (PIDIndicator == NONE) {
+				if (parameterFloat != NULL) {
+					if (*parameterFloat != set.param_value && !isnan(set.param_value) && !isinf(set.param_value)) {
+						*parameterFloat = set.param_value;
+						writeEEPROM();
+						// Report back new value
+						mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, *parameterFloat, parameterType, parameterListSize, -1);
+						len = mavlink_msg_to_send_buffer(buf, &msg);
+						SERIAL_PORT.write(buf, len);
+					}
+				}
+				else if (parameterByte != NULL) {
+					if (*parameterByte != set.param_value && !isnan(set.param_value) && !isinf(set.param_value)) {
+						*parameterByte = set.param_value;
+						writeEEPROM();
+						// Report back new value
+						mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, (float)*parameterByte, parameterType, parameterListSize, -1);
+						len = mavlink_msg_to_send_buffer(buf, &msg);
+						SERIAL_PORT.write(buf, len);
+					}
+				}
+				else if (parameterInt != NULL) {
+					if (*parameterInt != set.param_value && !isnan(set.param_value) && !isinf(set.param_value)) {
+						*parameterInt = set.param_value;
+						writeEEPROM();
+						// Report back new value
+						mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, (float)*parameterInt, parameterType, parameterListSize, -1);
+						len = mavlink_msg_to_send_buffer(buf, &msg);
+						SERIAL_PORT.write(buf, len);
+					}
+				}
+				else if (parameterULong != NULL) {
+					if (*parameterULong != set.param_value && !isnan(set.param_value) && !isinf(set.param_value)) {
+						*parameterULong = set.param_value;
+						writeEEPROM();
+						// Report back new value
+						mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, (float)*parameterULong, parameterType, parameterListSize, -1);
+						len = mavlink_msg_to_send_buffer(buf, &msg);
+						SERIAL_PORT.write(buf, len);
+					}
+				}
+			}
+			mavlink_msg_statustext_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0, "Write successful");
+			len = mavlink_msg_to_send_buffer(buf, &msg);
+			SERIAL_PORT.write(buf, len);
+
 			parameterChangeIndicator = -1;
 		}
 	}
@@ -1073,6 +1092,10 @@ void sendQueuedParameters() { // sending complete parameter list divided into fo
 		}
 		else if(paramListPartIndicator == 3) {
 			sendParameterListPart4();
+
+			mavlink_msg_statustext_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0, "Read successful");
+			len = mavlink_msg_to_send_buffer(buf, &msg);
+			SERIAL_PORT.write(buf, len);
 		}
 		paramListPartIndicator++;
 	}
@@ -1081,9 +1104,11 @@ void sendQueuedParameters() { // sending complete parameter list divided into fo
 	}
 }
 
-void receieveWaypoint() { // request waypoints one by one from GCS
-	if (waypointReceiving && waypointReceiveIndex <= waypointsToReceive) {
-		mavlink_msg_mission_request_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, waypointReceiveIndex);
+void   receiveWaypoint() { // request waypoints one by one from GCS
+	if (waypointReceiving && waypointRequestIndex < waypointsToRequest && waypointLastRequestedIndex != waypointRequestIndex) {
+		waypointLastRequestedIndex = waypointRequestIndex;
+
+		mavlink_msg_mission_request_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, waypointRequestIndex);
 		len = mavlink_msg_to_send_buffer(buf, &msg);
 		SERIAL_PORT.write(buf, len);
 	}
@@ -1098,6 +1123,8 @@ void readSerialCommand() {
 			// Handle message
 			uint8_t result = 0;
 			uint8_t command = 0;
+			float x = 0, y = 0, z = 0;
+			uint8_t isCurrentWaypoint = 0;
 			switch(msg.msgid) {
 
 			case MAVLINK_MSG_ID_COMMAND_LONG:
@@ -1158,9 +1185,9 @@ void readSerialCommand() {
 						homePosition.longitude = mavlink_msg_command_long_get_param6(&msg);
 						homePosition.altitude = mavlink_msg_command_long_get_param7(&msg);
 					}
-					result = 	MAV_RESULT_ACCEPTED;
+					result = MAV_RESULT_ACCEPTED;
 #else
-					result = 	MAV_RESULT_UNSUPPORTED;
+					result = MAV_RESULT_UNSUPPORTED;
 #endif
 					break;
 
@@ -1183,7 +1210,7 @@ void readSerialCommand() {
 					else result = MAV_RESULT_TEMPORARILY_REJECTED;
 					break;
 
-				case MAV_CMD_PREFLIGHT_STORAGE: //245, initial reading of parameter list requested by GCS
+				case MAV_CMD_PREFLIGHT_STORAGE: //245, initial reading/writing of parameter list requested by GCS
 					if (!motorArmed) {
 						if (mavlink_msg_command_long_get_param1(&msg) == 0.0f) {
 							paramListPartIndicator = indexCounter = 0;
@@ -1214,27 +1241,27 @@ void readSerialCommand() {
 				key = (char*) read.param_id;
 				parameterMatch = findParameter(key);
 
-				if (paramIndicator == P) {
+				if (PIDIndicator == P) {
 					mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, PID[parameterMatch].P, parameterType, parameterListSize, -1);
 					len = mavlink_msg_to_send_buffer(buf, &msg);
 					SERIAL_PORT.write(buf, len);
 				}
-				else if (paramIndicator == I) {
+				else if (PIDIndicator == I) {
 					mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, PID[parameterMatch].I, parameterType, parameterListSize, -1);
 					len = mavlink_msg_to_send_buffer(buf, &msg);
 					SERIAL_PORT.write(buf, len);
 				}
-				else if (paramIndicator == D) {
+				else if (PIDIndicator == D) {
 					mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, PID[parameterMatch].D, parameterType, parameterListSize, -1);
 					len = mavlink_msg_to_send_buffer(buf, &msg);
 					SERIAL_PORT.write(buf, len);
 				}
-				else if (paramIndicator == windUpGuard) {
+				else if (PIDIndicator == windUpGuard) {
 					mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, PID[parameterMatch].windupGuard, parameterType, parameterListSize, -1);
 					len = mavlink_msg_to_send_buffer(buf, &msg);
 					SERIAL_PORT.write(buf, len);
 				}
-				else if (paramIndicator == NONE) {
+				else if (PIDIndicator == NONE) {
 					if (parameterFloat != NULL) {
 						mavlink_msg_param_value_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, key, *parameterFloat, parameterType, parameterListSize, -1);
 						len = mavlink_msg_to_send_buffer(buf, &msg);
@@ -1256,6 +1283,9 @@ void readSerialCommand() {
 						SERIAL_PORT.write(buf, len);
 					}
 				}
+				mavlink_msg_statustext_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0, "Read successful");
+				len = mavlink_msg_to_send_buffer(buf, &msg);
+				SERIAL_PORT.write(buf, len);
 				break;
 
 			case MAVLINK_MSG_ID_PARAM_SET:  // set one specific onboard parameter
@@ -1282,18 +1312,20 @@ void readSerialCommand() {
 			case MAVLINK_MSG_ID_MISSION_REQUEST: // GCS requests a specific waypoint
 				__mavlink_mission_request_t requestedWaypointPacket;
 				mavlink_msg_mission_request_decode(&msg, &requestedWaypointPacket);
+
 				waypointSendIndex = requestedWaypointPacket.seq;
 
 				if(waypointSendIndex == missionNbPoint) {
-					mavlink_msg_mission_item_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, requestedWaypointPacket.seq,
-						MAV_FRAME_GLOBAL, MAV_CMD_NAV_WAYPOINT, 1, 1, 0, MIN_DISTANCE_TO_REACHED, 0, 0, waypoint[waypointSendIndex].longitude,
-						waypoint[waypointSendIndex].latitude, waypoint[waypointSendIndex].altitude);
+					isCurrentWaypoint = 1;
 				}
-				else {
-					mavlink_msg_mission_item_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, requestedWaypointPacket.seq,
-						MAV_FRAME_GLOBAL, MAV_CMD_NAV_WAYPOINT, 0, 1, 0, MIN_DISTANCE_TO_REACHED, 0, 0, waypoint[waypointSendIndex].longitude,
-						waypoint[waypointSendIndex].latitude, waypoint[waypointSendIndex].altitude);
-				}
+
+				// command needs scaling
+				x = waypoint[waypointSendIndex].latitude / 1.0e7f;
+				y = waypoint[waypointSendIndex].longitude / 1.0e7f;
+				z = waypoint[waypointSendIndex].altitude / 1.0e2f;
+
+				mavlink_msg_mission_item_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, requestedWaypointPacket.seq,
+					navFrame, MAV_CMD_NAV_WAYPOINT, isCurrentWaypoint, 1, 0, 0, 0, 0, x, y, z);
 				len = mavlink_msg_to_send_buffer(buf, &msg);
 				SERIAL_PORT.write(buf, len);
 
@@ -1301,80 +1333,106 @@ void readSerialCommand() {
 				waypointTimeLastSent = millis();
 				break;
 
-			case MAVLINK_MSG_ID_MISSION_COUNT:  // number of waypoints to be sent from GCS to AQ
+
+			case MAVLINK_MSG_ID_MISSION_COUNT: // number of waypoints to be sent from GCS to AQ
 				__mavlink_mission_count_t waypointListPacket;
 				mavlink_msg_mission_count_decode(&msg, &waypointListPacket);
 
-				if(waypointListPacket.count > 16) {
-					mavlink_msg_mission_ack_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, MAV_MISSION_NO_SPACE);
+				if(waypointListPacket.count > MAX_WAYPOINTS) {
+					mavlink_msg_statustext_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0, "Max. 16 waypoints");
 					len = mavlink_msg_to_send_buffer(buf, &msg);
 					SERIAL_PORT.write(buf, len);
+
+					waypointListPacket.count = MAX_WAYPOINTS;
 				}
-				else {
-					waypointsToReceive = waypointListPacket.count;
-					waypointTimeLastReceived = millis();
-					waypointReceiving = true;
-					waypointSending = false;
-					waypointReceiveIndex = 0;
-					waypointTimeLastRequest = 0;
-				}
+
+				waypointsToRequest = waypointListPacket.count;
+				waypointTimeLastReceived = millis();
+				waypointReceiving = true;
+				waypointSending = false;
+				waypointRequestIndex = 0;
+				waypointLastRequestedIndex = -1;
+				waypointTimeLastRequest = 0;
+				missionNbPoint = 0;
 				break;
 
 			case MAVLINK_MSG_ID_MISSION_ITEM: // add a waypoint from GCS to the waypoint list of AQ
+				if (waypointRequestIndex >= waypointsToRequest) { // all waypoints received, send ACK message
+					mavlink_msg_mission_ack_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, result);
+					len = mavlink_msg_to_send_buffer(buf, &msg);
+					SERIAL_PORT.write(buf, len);
+					waypointReceiving = false;
+					break;
+				}     
+
 				result = MAV_MISSION_ACCEPTED;
 
 				__mavlink_mission_item_t waypointPacket;
 				mavlink_msg_mission_item_decode(&msg, &waypointPacket);
+				missionNbPoint++;
 
-				missionNbPoint = waypointReceiveIndex - 1;
-				if(missionNbPoint < 0) {
-					missionNbPoint = 0;
-				}
+				waypoint[waypointRequestIndex].latitude = 1.0e7f * waypointPacket.x;
+				waypoint[waypointRequestIndex].longitude = 1.0e7f * waypointPacket.y;
+				waypoint[waypointRequestIndex].altitude = 1.0e2f * waypointPacket.z;
 
-				waypoint[missionNbPoint].latitude = waypointPacket.x;
-				waypoint[missionNbPoint].longitude = waypointPacket.y;
-				waypoint[missionNbPoint].altitude = waypointPacket.z;
-
-				if (waypointPacket.seq != waypointReceiveIndex) {
-					result = MAV_MISSION_INVALID_SEQUENCE;
+				// Check if receiving waypoints (mission upload expected)
+				if (!waypointReceiving) {
+					result = MAV_MISSION_ERROR;
 					mavlink_msg_mission_ack_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, result);
+					len = mavlink_msg_to_send_buffer(buf, &msg);
+					SERIAL_PORT.write(buf, len);
+
+					mavlink_msg_statustext_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0, "Error");
 					len = mavlink_msg_to_send_buffer(buf, &msg);
 					SERIAL_PORT.write(buf, len);
 					break;
 				}
 
-				// update waypoint receiving state machine
-				waypointTimeLastReceived = millis();
-				waypointTimeLastRequest = 0;
-				waypointReceiveIndex++;
-
-				if (waypointReceiveIndex > waypointsToReceive) {
+				// Check if this is the requested waypoint
+				if (waypointPacket.seq != waypointRequestIndex) {
+					result = MAV_MISSION_INVALID_SEQUENCE;
 					mavlink_msg_mission_ack_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, result);
 					len = mavlink_msg_to_send_buffer(buf, &msg);
 					SERIAL_PORT.write(buf, len);
-					waypointReceiving = false;
-				}        
+
+					mavlink_msg_statustext_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0, "Incorrect waypoint sequence");
+					len = mavlink_msg_to_send_buffer(buf, &msg);
+					SERIAL_PORT.write(buf, len);
+					break;
+				}
+
+				// Update waypoint receiving state machine
+				waypointTimeLastReceived = millis();
+				waypointTimeLastRequest = 0;
+				waypointRequestIndex++;
+
 				break;
 
 			case MAVLINK_MSG_ID_MISSION_CLEAR_ALL:  // delete all waypoints of AQ
 				for (uint8_t counter = 0; counter < MAX_WAYPOINTS; counter++) {
 					waypoint[counter] = GPS_INVALID_POSITION;
 				}
-				//	//mavlink_msg_statustext_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &status, 0, (char*)counter);
-				//	//len = mavlink_msg_to_send_buffer(buf, &status);
-				//	//SERIAL_PORT.write(buf, len);
-				//
+				missionNbPoint = 0;
+
 				// Sending ACK message three times to make sure it's received
 				for (int16_t i=0; i<3; i++) {
 					mavlink_msg_mission_ack_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, MAV_SYSTEM_ID, MAV_COMPONENT_ID, MAV_MISSION_ACCEPTED);
 					len = mavlink_msg_to_send_buffer(buf, &msg);
 					SERIAL_PORT.write(buf, len);
 				}
+
+				mavlink_msg_statustext_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0, "Mission deleted");
+				len = mavlink_msg_to_send_buffer(buf, &msg);
+				SERIAL_PORT.write(buf, len);
 				break;
 
 			case MAVLINK_MSG_ID_MISSION_ACK: 
 				// turn off waypoint sending
 				waypointSending = false;
+
+				mavlink_msg_statustext_pack(MAV_SYSTEM_ID, MAV_COMPONENT_ID, &msg, 0, "Waypoint OK");
+				len = mavlink_msg_to_send_buffer(buf, &msg);
+				SERIAL_PORT.write(buf, len);
 				break;
 			}
 		}
@@ -1388,9 +1446,9 @@ void readSerialCommand() {
 
 	uint32_t tnow = millis();
 
-	if (waypointReceiving && waypointReceiveIndex <= waypointsToReceive && tnow > waypointTimeLastRequest) {
+	if (waypointReceiving && waypointRequestIndex <= waypointsToRequest && tnow > waypointTimeLastRequest) {
 		waypointTimeLastRequest = tnow;
-		receieveWaypoint();
+		receiveWaypoint();
 	}
 
 	// stop waypoint sending if timeout
